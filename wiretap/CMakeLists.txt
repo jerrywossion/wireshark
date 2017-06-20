@@ -76,6 +76,7 @@ set(WIRETAP_FILES
 	stanag4607.c
 	tnef.c
 	toshiba.c
+	usbdump.c
 	visual.c
 	vms.c
 	vwr.c
