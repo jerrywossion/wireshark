@@ -45,6 +45,11 @@ struct usbdump_hdr {
     gint8       align;
 } __attribute__ ((packed));
 
+struct usbdump_records_mark {
+    gint64      offset;
+    gint32      length;
+};
+
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info,
     gint64 *data_offset);
 
@@ -74,6 +79,14 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
     wth->subtype_read = usbdump_read;
     wth->subtype_seek_read = usbdump_seek_read;
 
+    struct usbdump_records_mark *urm;
+    urm = (struct usbdump_records_mark*)g_malloc(sizeof(struct usbdump_records_mark));
+    /* Read length of the first buntch of records */
+    if (!wtap_read_bytes(wth->fh, &urm->length, sizeof(gint32), err, err_info))
+        return WTAP_OPEN_ERROR;
+    urm->offset = file_tell(wth->fh);
+    wth->priv = (void*)urm;
+
     //TODO: should I add a new file encapsulation type for usbdump?
     // wth->file_encap = XXX
     wth->snapshot_length = 0;
@@ -84,9 +97,17 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info, gint64 *data_offset)
 {
-    //FIXME: usbdump file format is not in the regular form that one record after one record, instead it groups several records
-    // Add the last group start addr and the length to wtap->priv, and check if we should update it here
-    *data_offset = file_tell(wth->fh);
+    gint64 tmp_offset = file_tell(wth->fh);
+    struct usbdump_records_mark *urm = (struct usbdump_records_mark*)wth->priv;
+    if ((tmp_offset - urm->offset) < urm->length) {
+        *data_offset = tmp_offset;
+    }
+    else {
+        if (!wtap_read_bytes(wth->fh, &urm->length, sizeof(gint32), err, err_info))
+            return FALSE;
+        urm->offset = file_tell(wth->fh);
+        *data_offset = urm->offset;
+    }
 
     return usbdump_read_record(wth, wth->fh, &wth->phdr, wth->frame_buffer, err, err_info);
 }
