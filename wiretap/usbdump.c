@@ -19,9 +19,12 @@
 
 #include "config.h"
 #include <string.h>
+#include <wsutil/nstime.h>
 #include "wtap-int.h"
 #include "usbdump.h"
 #include "file_wrappers.h"
+
+#define roundup2(x, y) (((x)+((y)-1))&(~((y)-1)))
 
 #define MAGIC_SIZE      4
 
@@ -30,24 +33,24 @@ static const guint8 usbdump_magic[MAGIC_SIZE] = {
 };
 
 struct usbcap_filehdr {
-    gint32      magic;
-    gint8       major;
-    gint8       minor;
-    gint8       reserved[26];
+    guint32      magic;
+    guint8       major;
+    guint8       minor;
+    guint8       reserved[26];
 } __attribute__ ((packed));
 
 struct usbdump_hdr {
-    gint32      ts_sec;
-    gint32      ts_usec;
-    gint32      caplen;
-    gint32      datalen;
-    gint8       hdrlen;
-    gint8       align;
+    guint32      ts_sec;
+    guint32      ts_usec;
+    guint32      caplen;
+    guint32      datalen;
+    guint8       hdrlen;
+    guint8       align;
 } __attribute__ ((packed));
 
 struct usbdump_records_mark {
     gint64      offset;
-    gint32      length;
+    guint32      length;
 };
 
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info,
@@ -56,7 +59,7 @@ static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info,
 static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off,
     struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info);
 
-static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info);
+static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 *data_offset, int *err, gchar **err_info);
 
 wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 {
@@ -97,19 +100,42 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info, gint64 *data_offset)
 {
+    struct usbdump_hdr uhdr;
+    guint32 ts_sec;
+    guint32 ts_usec;
+    guint32 caplen;
+    guint32 datalen;
+    guint8 hdrlen;
+    guint8 align;
+
     gint64 tmp_offset = file_tell(wth->fh);
     struct usbdump_records_mark *urm = (struct usbdump_records_mark*)wth->priv;
     if ((tmp_offset - urm->offset) < urm->length) {
         *data_offset = tmp_offset;
     }
     else {
-        if (!wtap_read_bytes(wth->fh, &urm->length, sizeof(gint32), err, err_info))
+        if (!wtap_read_bytes(wth->fh, &urm->length, sizeof(guint32), err, err_info))
             return FALSE;
         urm->offset = file_tell(wth->fh);
         *data_offset = urm->offset;
     }
 
-    return usbdump_read_record(wth, wth->fh, &wth->phdr, wth->frame_buffer, err, err_info);
+    /*
+    if (!wtap_read_bytes_or_eof(wth->fh, &uhdr, sizeof(uhdr), err, err_info))
+        return FALSE;
+    ts_sec = GINT32_FROM_LE(uhdr.ts_sec);
+    ts_usec = GINT32_FROM_LE(uhdr.ts_usec);
+    caplen = GINT32_FROM_LE(uhdr.caplen);
+    datalen = GINT32_FROM_LE(uhdr.datalen);
+    hdrlen = uhdr.hdrlen;
+    align = uhdr.align;
+
+    if (!wtap_read_bytes_or_eof(wth->fh, wth->frame_buffer, uhdr.caplen, err, err_info))
+        return FALSE;
+    stride = roundup2(uhdr.hdrlen + uhdr.caplen, uhdr.align);
+    */
+
+    return usbdump_read_record(wth, wth->fh, &wth->phdr, wth->frame_buffer, data_offset, err, err_info);
 }
 
 static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off, struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info)
@@ -117,11 +143,39 @@ static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off, struct wtap_pkthdr
     if (file_seek(wth->random_fh, seek_off, SEEK_SET, err) == -1)
         return FALSE;
 
-    return usbdump_read_record(wth, wth->random_fh, &wth->phdr, wth->frame_buffer, err, err_info);
+    return usbdump_read_record(wth, wth->random_fh, &wth->phdr, wth->frame_buffer, seek_off, err, err_info);
 }
 
-static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info)
+static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 *data_offset, int *err, gchar **err_info)
 {
+    struct usbdump_hdr uhdr;
+    guint32 ts_sec;
+    guint32 ts_usec;
+    guint32 caplen;
+    guint32 datalen;
+    guint8 stride;
+
+    if (!wtap_read_bytes_or_eof(fh, &uhdr, sizeof(uhdr), err, err_info))
+        return FALSE;
+    ts_sec = GUINT32_FROM_LE(uhdr.ts_sec);
+    ts_usec = GUINT32_FROM_LE(uhdr.ts_usec);
+    caplen = GUINT32_FROM_LE(uhdr.caplen);
+    datalen = GUINT32_FROM_LE(uhdr.datalen);
+
+    stride = (guint8) roundup2(uhdr.hdrlen + uhdr.caplen, uhdr.align);
+
+    phdr->rec_type = REC_TYPE_PACKET;
+    phdr->presence_flags = WTAP_HAS_CAP_LEN | WTAP_HAS_TS;
+    phdr->ts.secs = ts_sec;
+    phdr->ts.nsecs = ts_usec * 1000;
+    phdr->caplen = caplen;
+    phdr->len = datalen;
+
+    if (!wtap_read_packet_bytes(wth->fh, wth->frame_buffer,
+                                wth->phdr.caplen, err, err_info))
+        return FALSE;	/* Read error */
+    if (file_seek(fh, (gint64) (data_offset + stride), SEEK_SET, err) == -1)
+        return FALSE;
 }
 
 /*
