@@ -19,10 +19,9 @@
 
 #include "config.h"
 #include <string.h>
-#include <wsutil/nstime.h>
 #include "wtap-int.h"
-#include "usbdump.h"
 #include "file_wrappers.h"
+#include "usbdump.h"
 
 #define roundup2(x, y) (((x)+((y)-1))&(~((y)-1)))
 
@@ -59,7 +58,7 @@ static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info,
 static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off,
     struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info);
 
-static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 *data_offset, int *err, gchar **err_info);
+static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 data_offset, int *err, gchar **err_info);
 
 wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 {
@@ -90,8 +89,7 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
     urm->offset = file_tell(wth->fh);
     wth->priv = (void*)urm;
 
-    //TODO: should I add a new file encapsulation type for usbdump?
-    // wth->file_encap = XXX
+    wth->file_encap = WTAP_ENCAP_USB_FREEBSD;
     wth->snapshot_length = 0;
     wth->file_tsprec = WTAP_TSPREC_USEC; /* usbdump use tv_sec & tv_usec to express the capture timestamp */
 
@@ -100,14 +98,6 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info, gint64 *data_offset)
 {
-    struct usbdump_hdr uhdr;
-    guint32 ts_sec;
-    guint32 ts_usec;
-    guint32 caplen;
-    guint32 datalen;
-    guint8 hdrlen;
-    guint8 align;
-
     gint64 tmp_offset = file_tell(wth->fh);
     struct usbdump_records_mark *urm = (struct usbdump_records_mark*)wth->priv;
     if ((tmp_offset - urm->offset) < urm->length) {
@@ -120,22 +110,7 @@ static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info, gint64 *data
         *data_offset = urm->offset;
     }
 
-    /*
-    if (!wtap_read_bytes_or_eof(wth->fh, &uhdr, sizeof(uhdr), err, err_info))
-        return FALSE;
-    ts_sec = GINT32_FROM_LE(uhdr.ts_sec);
-    ts_usec = GINT32_FROM_LE(uhdr.ts_usec);
-    caplen = GINT32_FROM_LE(uhdr.caplen);
-    datalen = GINT32_FROM_LE(uhdr.datalen);
-    hdrlen = uhdr.hdrlen;
-    align = uhdr.align;
-
-    if (!wtap_read_bytes_or_eof(wth->fh, wth->frame_buffer, uhdr.caplen, err, err_info))
-        return FALSE;
-    stride = roundup2(uhdr.hdrlen + uhdr.caplen, uhdr.align);
-    */
-
-    return usbdump_read_record(wth, wth->fh, &wth->phdr, wth->frame_buffer, data_offset, err, err_info);
+    return usbdump_read_record(wth, wth->fh, &wth->phdr, wth->frame_buffer, *data_offset, err, err_info);
 }
 
 static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off, struct wtap_pkthdr *phdr, Buffer *buf, int *err, gchar **err_info)
@@ -143,10 +118,10 @@ static gboolean usbdump_seek_read(wtap *wth, gint64 seek_off, struct wtap_pkthdr
     if (file_seek(wth->random_fh, seek_off, SEEK_SET, err) == -1)
         return FALSE;
 
-    return usbdump_read_record(wth, wth->random_fh, &wth->phdr, wth->frame_buffer, seek_off, err, err_info);
+    return usbdump_read_record(wth, wth->random_fh, phdr, buf, seek_off, err, err_info);
 }
 
-static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 *data_offset, int *err, gchar **err_info)
+static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *phdr, Buffer *buf, gint64 data_offset, int *err, gchar **err_info)
 {
     struct usbdump_hdr uhdr;
     guint32 ts_sec;
@@ -171,11 +146,12 @@ static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *ph
     phdr->caplen = caplen;
     phdr->len = datalen;
 
-    if (!wtap_read_packet_bytes(wth->fh, wth->frame_buffer,
+    if (!wtap_read_packet_bytes(wth->fh, buf,
                                 wth->phdr.caplen, err, err_info))
         return FALSE;	/* Read error */
     if (file_seek(fh, (gint64) (data_offset + stride), SEEK_SET, err) == -1)
         return FALSE;
+    return TRUE;
 }
 
 /*

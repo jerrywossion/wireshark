@@ -86,6 +86,7 @@ NONGENERATED_C_FILES = \
 	stanag4607.c		\
 	tnef.c			\
 	toshiba.c		\
+	usbdump.c       \
 	visual.c		\
 	vms.c			\
 	vwr.c			\
@@ -151,6 +152,7 @@ NONGENERATED_HEADER_FILES = \
 	stanag4607.h		\
 	tnef.h			\
 	toshiba.h		\
+	usbdump.h       \
 	visual.h		\
 	vms.h			\
 	vwr.h			\
