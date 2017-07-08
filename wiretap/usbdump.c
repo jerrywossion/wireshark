@@ -90,7 +90,7 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
     wth->priv = (void*)urm;
 
     //wth->file_encap = WTAP_ENCAP_USB_FREEBSD;
-    wth->snapshot_length = 0;
+    //wth->snapshot_length = 0;
     wth->file_tsprec = WTAP_TSPREC_USEC; /* usbdump use tv_sec & tv_usec to express the capture timestamp */
 
     return WTAP_OPEN_MINE;
@@ -98,13 +98,13 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
 
 static gboolean usbdump_read(wtap *wth, int *err, gchar **err_info, gint64 *data_offset)
 {
-    gint64 tmp_offset = file_tell(wth->fh);
+    gint64 cur_offset = file_tell(wth->fh);
     struct usbdump_records_mark *urm = (struct usbdump_records_mark*)wth->priv;
-    if ((tmp_offset - urm->offset) < urm->length) {
-        *data_offset = tmp_offset;
+    if ((cur_offset - urm->offset) < urm->length) {
+        *data_offset = cur_offset;
     }
     else {
-        if (!wtap_read_bytes(wth->fh, &urm->length, sizeof(guint32), err, err_info))
+        if (wtap_read_bytes(wth->fh, &urm->length, sizeof(guint32), err, err_info) == -1)
             return FALSE;
         urm->offset = file_tell(wth->fh);
         *data_offset = urm->offset;
@@ -149,6 +149,8 @@ static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *ph
     //FIXME
     if (wth) {}
 
+    if (file_seek(fh, (gint64) (data_offset + uhdr.hdrlen), SEEK_SET, err) == -1)
+        return FALSE;
     if (!wtap_read_packet_bytes(fh, buf, phdr->caplen, err, err_info))
         return FALSE;	/* Read error */
     if (file_seek(fh, (gint64) (data_offset + stride), SEEK_SET, err) == -1)
