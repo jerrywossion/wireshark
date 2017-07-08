@@ -89,7 +89,7 @@ wtap_open_return_val usbdump_open(wtap *wth, int *err, gchar **err_info)
     urm->offset = file_tell(wth->fh);
     wth->priv = (void*)urm;
 
-    //wth->file_encap = WTAP_ENCAP_USB_FREEBSD;
+    wth->file_encap = WTAP_ENCAP_USB_FREEBSD;
     //wth->snapshot_length = 0;
     wth->file_tsprec = WTAP_TSPREC_USEC; /* usbdump use tv_sec & tv_usec to express the capture timestamp */
 
