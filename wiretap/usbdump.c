@@ -128,7 +128,7 @@ static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *ph
     guint32 ts_usec;
     guint32 caplen;
     guint32 datalen;
-    guint8 stride;
+    guint32 stride;
 
     if (!wtap_read_bytes_or_eof(fh, &uhdr, sizeof(uhdr), err, err_info))
         return FALSE;
@@ -137,7 +137,7 @@ static gboolean usbdump_read_record(wtap *wth, FILE_T fh, struct wtap_pkthdr *ph
     caplen = GUINT32_FROM_LE(uhdr.caplen);
     datalen = GUINT32_FROM_LE(uhdr.datalen);
 
-    stride = (guint8) roundup2(uhdr.hdrlen + uhdr.caplen, uhdr.align);
+    stride = roundup2(uhdr.hdrlen + uhdr.caplen, uhdr.align);
 
     phdr->rec_type = REC_TYPE_PACKET;
     phdr->presence_flags = WTAP_HAS_CAP_LEN | WTAP_HAS_TS;
