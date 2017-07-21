@@ -4098,8 +4098,10 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     proto_tree_add_item(tree, hf_usb_busunit, tvb, 4, 4, ENC_LITTLE_ENDIAN);
     proto_tree_add_item(tree, hf_usb_address, tvb, 8, 1, ENC_LITTLE_ENDIAN);
     proto_tree_add_item(tree, hf_usb_mode, tvb, 9, 1, ENC_LITTLE_ENDIAN);
-    proto_tree_add_item_ret_uint(tree, hf_usb_freebsd_urb_type, tvb, 10, 1, ENC_LITTLE_ENDIAN, (guint32*)&urb_type);
-    proto_tree_add_item_ret_uint(tree, hf_usb_freebsd_transfer_type, tvb, 11, 1, ENC_LITTLE_ENDIAN, (guint32*)&xfertype);
+    urb_type = tvb_get_guint8(tvb, 10);
+    proto_tree_add_item(tree, hf_usb_freebsd_urb_type, tvb, 10, 1, ENC_LITTLE_ENDIAN);
+    xfertype = tvb_get_guint8(tvb, 11);
+    proto_tree_add_item(tree, hf_usb_freebsd_transfer_type, tvb, 11, 1, ENC_LITTLE_ENDIAN);
     proto_tree_add_bitmask(tree, tvb, 12, hf_usb_xferflags, ett_usb_xferflags,
                            usb_xferflags_fields, ENC_LITTLE_ENDIAN);
     proto_tree_add_bitmask(tree, tvb, 16, hf_usb_xferstatus, ett_usb_xferstatus,
@@ -4208,14 +4210,16 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                     usb_conv_info->usb_trans_info = usb_trans_info;
 
                     if (is_usb_standard_setup_request(usb_trans_info)) {
-                        gint t_offset = offset;
+                        gint t_offset = setup_offset;
                         const usb_setup_dissector_table_t *tmp;
                         usb_setup_dissector dissector;
 
                         proto_tree_add_item(setup_tree, hf_usb_request, tvb, setup_offset, 1, ENC_LITTLE_ENDIAN);
                         t_offset += 1;
+                        /*
                         col_add_fstr(pinfo->cinfo, COL_INFO, "%s Request",
                                      val_to_str_ext(usb_trans_info->setup.request, &setup_request_names_vals_ext, "Unknown type %x"));
+                                     */
                         dissector = NULL;
                         for (tmp = setup_request_dissectors; tmp->dissector; tmp++) {
                             if (tmp->request == usb_trans_info->setup.request) {
@@ -4228,7 +4232,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                             dissector = &dissect_usb_setup_generic;
                         }
 
-                        tmp_offset = dissector(pinfo, setup_tree, tvb, tmp_offset, usb_conv_info);
+                        tmp_offset = dissector(pinfo, setup_tree, tvb, t_offset, usb_conv_info);
                     }
                 }
                 break;
