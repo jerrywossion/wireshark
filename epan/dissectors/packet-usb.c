@@ -4079,6 +4079,12 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     guint32 nframes;
     guint32 i;
 
+    guint8 xfertype;
+    guint8 urb_type;
+    proto_tree *control_tree = NULL, *setup_tree = NULL;
+    usb_conv_info_t *usb_conv_info;
+    conversation_t *conversation;
+
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "USB");
 
     /* add usb hdr*/
@@ -4092,8 +4098,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     proto_tree_add_item(tree, hf_usb_busunit, tvb, 4, 4, ENC_LITTLE_ENDIAN);
     proto_tree_add_item(tree, hf_usb_address, tvb, 8, 1, ENC_LITTLE_ENDIAN);
     proto_tree_add_item(tree, hf_usb_mode, tvb, 9, 1, ENC_LITTLE_ENDIAN);
-    proto_tree_add_item(tree, hf_usb_freebsd_urb_type, tvb, 10, 1, ENC_LITTLE_ENDIAN);
-    proto_tree_add_item(tree, hf_usb_freebsd_transfer_type, tvb, 11, 1, ENC_LITTLE_ENDIAN);
+    proto_tree_add_item_ret_uint(tree, hf_usb_freebsd_urb_type, tvb, 10, 1, ENC_LITTLE_ENDIAN, (guint32*)&urb_type);
+    proto_tree_add_item_ret_uint(tree, hf_usb_freebsd_transfer_type, tvb, 11, 1, ENC_LITTLE_ENDIAN, (guint32*)&xfertype);
     proto_tree_add_bitmask(tree, tvb, 12, hf_usb_xferflags, ett_usb_xferflags,
                            usb_xferflags_fields, ENC_LITTLE_ENDIAN);
     proto_tree_add_bitmask(tree, tvb, 16, hf_usb_xferstatus, ett_usb_xferstatus,
@@ -4106,10 +4112,41 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     proto_tree_add_bitmask(tree, tvb, 40, hf_usb_endpoint_address, ett_usb_endpoint, usb_endpoint_fields, ENC_NA);
     proto_tree_add_item(tree, hf_usb_speed, tvb, 44, 1, ENC_LITTLE_ENDIAN);
 
+    conversation = get_usb_conversation(pinfo, &pinfo->src, &pinfo->dst, pinfo->srcport, pinfo->destport);
+    usb_conv_info = get_usb_conv_info(conversation);
+    clear_usb_conv_tmp_data(usb_conv_info);
+
+    switch (xfertype) {
+    case FREEBSD_URB_CONTROL:
+        xfertype = URB_CONTROL;
+        break;
+    case FREEBSD_URB_BULK:
+        xfertype = URB_BULK;
+        break;
+    case FREEBSD_URB_ISOCHRONOUS:
+        xfertype = URB_ISOCHRONOUS;
+        break;
+    case FREEBSD_URB_INTERRUPT:
+        xfertype = URB_INTERRUPT;
+        break;
+    }
+
+    usb_conv_info->transfer_type = xfertype;
+    usb_conv_info->is_request = (urb_type == FREEBSD_URB_SUBMIT);
+
+
     offset += 128;
     for (i = 0; i < nframes; i++) {
         guint32 framelen;
         guint64 frameflags;
+
+        gint tmp_offset, setup_offset;
+        guint8 setup_requesttype;
+        guint8 setup_request;
+        guint8 setup_wValue;
+        guint8 setup_wIndex;
+        guint8 setup_wLength;
+        usb_trans_info_t *usb_trans_info, trans_info;
 
         frame_tree = proto_tree_add_subtree_format(tree, tvb, offset, -1,
                                                    ett_usb_frame, &ti,
@@ -4128,8 +4165,77 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
             /*
              * XXX - ultimately, we should dissect this data.
              */
+
+            // Jie Weng
+#if 0
             proto_tree_add_item(frame_tree, hf_usb_frame_data, tvb, offset,
                                 framelen, ENC_NA);
+#endif
+            switch (xfertype) {
+            case URB_BULK:
+                // bInterfaceClass
+                break;
+            case URB_INTERRUPT:
+                break;
+            case URB_CONTROL:
+                control_tree = proto_tree_add_subtree_format(parent, tvb, offset, framelen,
+                                                           ett_usb_frame, &ti,
+                                                           "URB CONTROL");
+                if (urb_type == FREEBSD_URB_SUBMIT) {
+                    tmp_offset = offset;
+                    setup_tree = proto_tree_add_subtree(control_tree, tvb, tmp_offset, 8, ett_usb_setup_hdr, NULL, "URB setup");
+                    // get requesttype and dissect
+                    setup_requesttype = tvb_get_guint8(tvb, tmp_offset);
+                    tmp_offset = dissect_usb_bmrequesttype(setup_tree, tvb, tmp_offset);
+                    setup_offset = tmp_offset;
+                    // get other fields
+                    setup_request = tvb_get_guint8(tvb, tmp_offset);
+                    tmp_offset++;
+                    setup_wValue = tvb_get_guint8(tvb, tmp_offset);
+                    tmp_offset += 2;
+                    setup_wIndex = tvb_get_guint8(tvb, tmp_offset);
+                    tmp_offset += 2;
+                    setup_wLength = tvb_get_guint8(tvb, tmp_offset);
+                    tmp_offset += 2;
+
+                    usb_trans_info = &trans_info;
+                    usb_trans_info->setup.requesttype = setup_requesttype;
+                    usb_trans_info->setup.request = setup_request;
+                    usb_trans_info->setup.wValue = setup_wValue;
+                    usb_trans_info->setup.wIndex = setup_wIndex;
+                    usb_trans_info->setup.wLength = setup_wLength;
+
+                    usb_conv_info->usb_trans_info = usb_trans_info;
+
+                    if (is_usb_standard_setup_request(usb_trans_info)) {
+                        gint t_offset = offset;
+                        const usb_setup_dissector_table_t *tmp;
+                        usb_setup_dissector dissector;
+
+                        proto_tree_add_item(setup_tree, hf_usb_request, tvb, setup_offset, 1, ENC_LITTLE_ENDIAN);
+                        t_offset += 1;
+                        col_add_fstr(pinfo->cinfo, COL_INFO, "%s Request",
+                                     val_to_str_ext(usb_trans_info->setup.request, &setup_request_names_vals_ext, "Unknown type %x"));
+                        dissector = NULL;
+                        for (tmp = setup_request_dissectors; tmp->dissector; tmp++) {
+                            if (tmp->request == usb_trans_info->setup.request) {
+                                dissector = tmp->dissector;
+                                break;
+                            }
+                        }
+
+                        if (!dissector) {
+                            dissector = &dissect_usb_setup_generic;
+                        }
+
+                        tmp_offset = dissector(pinfo, setup_tree, tvb, tmp_offset, usb_conv_info);
+                    }
+                }
+                break;
+            case URB_ISOCHRONOUS:
+                break;
+            }
+
             offset += (framelen + 3) & ~3;
         }
         proto_item_set_end(ti, tvb, offset);
