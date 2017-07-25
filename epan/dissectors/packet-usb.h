@@ -48,7 +48,8 @@ typedef enum {
     USB_HEADER_USBPCAP,
     USB_HEADER_MAUSB,
     USB_HEADER_USBIP,
-    USB_HEADER_DARWIN
+    USB_HEADER_DARWIN,
+    USB_HEADER_FREEBSD
 } usb_header_t;
 
 #define USB_HEADER_IS_LINUX(type) \
