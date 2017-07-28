@@ -4161,6 +4161,21 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     usb_conv_info->is_request = (urb_type == URB_SUBMIT);
     usb_conv_info->usb_trans_info = usb_get_trans_info(tvb, pinfo, tree, header_type, usb_conv_info, usb_id);
 
+    switch (xfertype) {
+    case FREEBSD_URB_BULK:
+        usb_conv_info->transfer_type = URB_BULK;
+        break;
+    case FREEBSD_URB_CONTROL:
+        usb_conv_info->transfer_type = URB_CONTROL;
+        break;
+    case FREEBSD_URB_INTERRUPT:
+        usb_conv_info->transfer_type = URB_INTERRUPT;
+        break;
+    case FREEBSD_URB_ISOCHRONOUS:
+        usb_conv_info->transfer_type = URB_ISOCHRONOUS;
+        break;
+    }
+
     offset += 128;
     for (i = 0; i < nframes; i++) {
         guint32 framelen;
@@ -4195,8 +4210,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
             case FREEBSD_URB_CONTROL:
                 if (freebsd_urb_type == FREEBSD_URB_SUBMIT) {
                     /* handle request */
-                    usb_setup_dissector dissector;
-                    const usb_setup_dissector_table_t *tmp;
+                    //usb_setup_dissector dissector;
+                    //const usb_setup_dissector_table_t *tmp;
 
                     setup_tree = proto_tree_add_subtree(parent, tvb, offset, 8, ett_usb_setup_hdr, NULL, "URB setup");
                     setup_offset = dissect_usb_bmrequesttype(setup_tree, tvb, offset);
@@ -4222,24 +4237,34 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                     usb_conv_info->usb_trans_info->setup.wIndex = usb_trans_info->setup.wIndex;
                     usb_conv_info->usb_trans_info->setup.wLength = usb_trans_info->setup.wLength;
 
-                    dissector = NULL;
-                    for (tmp = setup_request_dissectors; tmp->dissector; tmp++) {
-                        if (tmp->request == usb_trans_info->setup.request) {
-                            dissector = tmp->dissector;
-                            break;
+                    dissect_usb_setup_request(pinfo, parent, tvb, offset, urb_type, usb_conv_info, header_type);
+
+#if 0
+                    if (is_usb_standard_setup_request(usb_trans_info)) {
+                        dissector = NULL;
+                        for (tmp = setup_request_dissectors; tmp->dissector; tmp++) {
+                            if (tmp->request == usb_trans_info->setup.request) {
+                                dissector = tmp->dissector;
+                                break;
+                            }
                         }
-                    }
 
-                    if (!dissector) {
-                        dissector = &dissect_usb_setup_generic;
-                    }
+                        if (!dissector) {
+                            dissector = &dissect_usb_setup_generic;
+                        }
 
-                    dissector(pinfo, setup_tree, tvb, setup_offset + 1, usb_conv_info);
-                    usb_tap_queue_packet(pinfo, urb_type, usb_conv_info);
+                        dissector(pinfo, setup_tree, tvb, setup_offset + 1, usb_conv_info);
+                        usb_tap_queue_packet(pinfo, urb_type, usb_conv_info);
+                    }
+                    else {
+
+                    }
+#endif
                 }
                 else {
                     /* handle response */
-                    dissect_usb_standard_setup_response(pinfo, parent, tvb, offset, usb_conv_info);
+                    //dissect_usb_standard_setup_response(pinfo, parent, tvb, offset, usb_conv_info);
+                    dissect_usb_setup_response(pinfo, parent, tvb, offset, urb_type, usb_conv_info);
                 }
                 break;
             case FREEBSD_URB_BULK:
@@ -4247,8 +4272,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 PROTO_ITEM_SET_GENERATED(item);
                 break;
             }
-            //dissect_usb_payload(tvb, pinfo, parent, tree, usb_conv_info, urb_type,
-            //                    offset, device_address);
+            dissect_usb_payload(tvb, pinfo, parent, tree, usb_conv_info, urb_type,
+                                offset, usb_conv_info->device_address);
 
             offset += (framelen + 3) & ~3;
         }
