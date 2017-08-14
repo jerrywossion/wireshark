@@ -4071,22 +4071,6 @@ dissect_usb_payload(tvbuff_t *tvb, packet_info *pinfo,
 }
 
 
-/* ==========================================================================================
- *     FreeBSD usbdump packet dissectors
- *         Jie Weng
- * ----------------------------------------------------------------------------------------*/
-
-
-
-
-
-
-
-
-
-/* ========================================================================================*/
-
-
 static int
 dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void *data _U_)
 {
@@ -4106,7 +4090,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     guint16 usb_id;
 
     guint8 endpoint;
-    //guint16 device_address;
+    guint16 device_address;
 
     col_set_str(pinfo->cinfo, COL_PROTOCOL, "USB");
 
@@ -4118,8 +4102,10 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     }
 
     proto_tree_add_item(tree, hf_usb_totlen, tvb, 0, 4, ENC_LITTLE_ENDIAN);
-    usb_id = tvb_get_guint16(tvb, 4, ENC_LITTLE_ENDIAN);
+    usb_id = tvb_get_guint32(tvb, 4, ENC_LITTLE_ENDIAN);
+    //usb_id = tvb_get_guint16(tvb, 4, ENC_LITTLE_ENDIAN); // usb_id is 32-bits long??
     proto_tree_add_item(tree, hf_usb_busunit, tvb, 4, 4, ENC_LITTLE_ENDIAN);
+    device_address = tvb_get_guint8(tvb, 8);
     proto_tree_add_item(tree, hf_usb_address, tvb, 8, 1, ENC_LITTLE_ENDIAN);
     proto_tree_add_item(tree, hf_usb_mode, tvb, 9, 1, ENC_LITTLE_ENDIAN);
     freebsd_urb_type = tvb_get_guint8(tvb, 10);
@@ -4149,6 +4135,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     proto_tree_add_bitmask(tree, tvb, 40, hf_usb_endpoint_address, ett_usb_endpoint, usb_endpoint_fields, ENC_NA);
     proto_tree_add_item(tree, hf_usb_speed, tvb, 44, 1, ENC_LITTLE_ENDIAN);
 
+    usb_set_addr(tree, tvb, pinfo, usb_id, device_address, endpoint, (urb_type == URB_SUBMIT));
+
     conversation = get_usb_conversation(pinfo, &pinfo->src, &pinfo->dst, pinfo->srcport, pinfo->destport);
     // data of usb_conv_info is file scope
     usb_conv_info = get_usb_conv_info(conversation);
@@ -4157,9 +4145,14 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     // if not set, interfaceClass will be clear before we dissect bulk data
     usb_conv_info->endpoint = endpoint&0x7F;
 
+    usb_conv_info->direction = endpoint&URB_TRANSFER_IN ? P2P_DIR_RECV : P2P_DIR_SENT;
+
     // if not set, usb_trans_info will not be saved and we will get error while dissecting response data
     usb_conv_info->is_request = (urb_type == URB_SUBMIT);
     usb_conv_info->usb_trans_info = usb_get_trans_info(tvb, pinfo, tree, header_type, usb_conv_info, usb_id);
+
+    usb_conv_info->device_address = device_address;
+    usb_conv_info->bus_id = usb_id;
 
     switch (xfertype) {
     case FREEBSD_URB_BULK:
@@ -4174,6 +4167,14 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
     case FREEBSD_URB_ISOCHRONOUS:
         usb_conv_info->transfer_type = URB_ISOCHRONOUS;
         break;
+    default:
+        usb_conv_info->transfer_type = URB_UNKNOWN;
+    }
+
+    usb_conv_info->usb_trans_info = usb_get_trans_info(tvb, pinfo, tree, header_type, usb_conv_info, usb_id);
+
+    if (usb_conv_info->transfer_type != URB_CONTROL) {
+        usb_tap_queue_packet(pinfo, urb_type, usb_conv_info);
     }
 
     offset += 128;
@@ -4195,10 +4196,10 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                                           ENC_LITTLE_ENDIAN, &frameflags);
         offset += 4;
         if (frameflags & FREEBSD_FRAMEFLAG_DATA_FOLLOWS) {
-            proto_tree *setup_tree;
-            gint setup_offset;
-            gint tmp_offset;
-            usb_trans_info_t *usb_trans_info, trans_info;
+            //proto_tree *setup_tree;
+            //gint setup_offset;
+            //gint tmp_offset;
+            //usb_trans_info_t *usb_trans_info, trans_info;
             /*
              * XXX - ultimately, we should dissect this data.
              */
@@ -4213,6 +4214,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                     //usb_setup_dissector dissector;
                     //const usb_setup_dissector_table_t *tmp;
 
+                    /*
                     setup_tree = proto_tree_add_subtree(parent, tvb, offset, 8, ett_usb_setup_hdr, NULL, "URB setup");
                     setup_offset = dissect_usb_bmrequesttype(setup_tree, tvb, offset);
                     proto_tree_add_item(setup_tree, hf_usb_request, tvb, setup_offset, 1, ENC_LITTLE_ENDIAN);
@@ -4237,7 +4239,9 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                     usb_conv_info->usb_trans_info->setup.wIndex = usb_trans_info->setup.wIndex;
                     usb_conv_info->usb_trans_info->setup.wLength = usb_trans_info->setup.wLength;
 
-                    dissect_usb_setup_request(pinfo, parent, tvb, offset, urb_type, usb_conv_info, header_type);
+                     */
+
+                    offset = dissect_usb_setup_request(pinfo, parent, tvb, offset, urb_type, usb_conv_info, header_type);
 
 #if 0
                     if (is_usb_standard_setup_request(usb_trans_info)) {
@@ -4264,7 +4268,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 else {
                     /* handle response */
                     //dissect_usb_standard_setup_response(pinfo, parent, tvb, offset, usb_conv_info);
-                    dissect_usb_setup_response(pinfo, parent, tvb, offset, urb_type, usb_conv_info);
+                    offset = dissect_usb_setup_response(pinfo, parent, tvb, offset, urb_type, usb_conv_info);
                 }
                 break;
             case FREEBSD_URB_BULK:
@@ -4273,7 +4277,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 break;
             }
             dissect_usb_payload(tvb, pinfo, parent, tree, usb_conv_info, urb_type,
-                                offset, usb_conv_info->device_address);
+                                offset, device_address);
 
             offset += (framelen + 3) & ~3;
         }
