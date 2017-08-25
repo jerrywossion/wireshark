@@ -4182,6 +4182,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
         guint32 framelen;
         guint64 frameflags;
 
+        tvbuff_t *tmp_tvb = NULL;
+
         frame_tree = proto_tree_add_subtree_format(tree, tvb, offset, -1,
                                                    ett_usb_frame, &ti,
                                                    "Frame %u", i);
@@ -4195,10 +4197,13 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                                           usb_frame_flags_fields,
                                           ENC_LITTLE_ENDIAN, &frameflags);
         offset += 4;
+
+        tmp_tvb = tvb_new_subset_length(tvb, offset, framelen);
+
         if (frameflags & FREEBSD_FRAMEFLAG_DATA_FOLLOWS) {
             //proto_tree *setup_tree;
             //gint setup_offset;
-            //gint tmp_offset;
+            gint tmp_offset = 0;
             //usb_trans_info_t *usb_trans_info, trans_info;
             /*
              * XXX - ultimately, we should dissect this data.
@@ -4241,7 +4246,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
 
                      */
 
-                    offset = dissect_usb_setup_request(pinfo, parent, tvb, offset, urb_type, usb_conv_info, header_type);
+                    tmp_offset = dissect_usb_setup_request(pinfo, parent, tmp_tvb, tmp_offset, urb_type, usb_conv_info, header_type);
 
 #if 0
                     if (is_usb_standard_setup_request(usb_trans_info)) {
@@ -4268,7 +4273,7 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 else {
                     /* handle response */
                     //dissect_usb_standard_setup_response(pinfo, parent, tvb, offset, usb_conv_info);
-                    offset = dissect_usb_setup_response(pinfo, parent, tvb, offset, urb_type, usb_conv_info);
+                    tmp_offset = dissect_usb_setup_response(pinfo, parent, tmp_tvb, tmp_offset, urb_type, usb_conv_info);
                 }
                 break;
             case FREEBSD_URB_BULK:
@@ -4276,8 +4281,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 PROTO_ITEM_SET_GENERATED(item);
                 break;
             }
-            dissect_usb_payload(tvb, pinfo, parent, tree, usb_conv_info, urb_type,
-                                offset, device_address);
+            dissect_usb_payload(tmp_tvb, pinfo, parent, tree, usb_conv_info, urb_type,
+                                tmp_offset, device_address);
 
             offset += (framelen + 3) & ~3;
         }
