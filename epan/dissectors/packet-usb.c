@@ -4277,6 +4277,8 @@ dissect_freebsd_usb(tvbuff_t *tvb, packet_info *pinfo, proto_tree *parent, void 
                 }
                 break;
             case FREEBSD_URB_BULK:
+            case FREEBSD_URB_INTERRUPT:
+            case FREEBSD_URB_ISOCHRONOUS:
                 item = proto_tree_add_uint(parent, hf_usb_bInterfaceClass, tvb, 0, 0, usb_conv_info->interfaceClass);
                 PROTO_ITEM_SET_GENERATED(item);
                 break;
